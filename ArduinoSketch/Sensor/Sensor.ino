@@ -54,7 +54,7 @@ void sendData(int lock, int light)
     data.reserve = 0xFF;
     data.lockReq = lock;
     data.lightReq = light;
-    data.checksum = 0xFF;
+    data.checksum = CRC::CRC16((uint8_t *)&data, 8);
     memset(data.padding, 0x20, 6);
     //encrypt
     aes128_enc_single(key, outgoing);
@@ -72,21 +72,22 @@ void serialEvent()
    int count = 0;
    while(Serial.available())
    {
+      if(count >= 16)
+          return;
       incoming[count++] = Serial.read();
       delay(10);
    }
-   //add nullterminate just in case
-   incoming[16] = '\0';
-   
+ 
    //only care if 16 bytes of data
    if(count == 16)
    {
       aes128_dec_single(key, incoming);
+      res_msg * data = (res_msg *)incoming;
       //response ok!
-      if(incoming[0] == 0)
+      if(data->response == RES_OK)
       {
-         lockState = incoming[1];
-         lightState = incoming[2]; 
+         lockState = data->lockState;
+         lightState = data->lightState;
       }
       else if(incoming[0] == 1) //error ??
       {
@@ -125,5 +126,5 @@ void loop()
           sendData(SIG_LOCK, SIG_LIGHTOFF);
     }
 
-
+    //wait for 5sec?
 }
