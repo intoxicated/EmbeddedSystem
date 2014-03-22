@@ -77,6 +77,48 @@ int checkErrors(data_msg * data)
    return 0;
 }
 
+int doAction(data_msg * data)
+{
+   if(data->lockReq == lockState && data->lightReq == lightState)
+       return SAME_STATE;
+   //change status of door and light
+   if(data->lockReq == SIG_LOCK &&
+       data->lockReq != lockState){
+       digitalWrite(doorUnlockLED, LOW);
+       delay(1000);
+       digitalWrite(doorLockLED, HIGH);
+       delay(1000);
+   }
+   else if(data->lockReq == SIG_UNLOCK &&
+       data->lockReq != lockState){
+       digitalWrite(doorLockLED, LOW);
+       delay(1000);
+       digitalWrite(doorUnlockLED, HIGH);
+       delay(1000);
+   }
+
+   if(data->lightReq == SIG_LIGHTOFF &&
+       data->lightReq != lightState) {
+       analogWrite(lightRedLED, 0);
+       analogWrite(lightGreenLED, 0);
+       analogWrite(lightBlueLED, 0);
+       delay(250);     
+   }
+   else if(data->lightReq == SIG_LIGHTON &&
+       data->lightReq != lightState){
+       analogWrite(lightRedLED, 0);
+       analogWrite(lightGreenLED, 0);
+       analogWrite(lightBlueLED, 0);
+       delay(250); 
+   }
+   
+   //change state of lock and light 
+   lockState = data->lockReq;
+   lightState = data->lightReq;
+   
+   return NO_ERR;
+}
+
 int readAndSet()
 {
    int count = 0;
@@ -112,12 +154,10 @@ int readAndSet()
    nodeMap.setValueOf(data->id, data->sequence);
    
    //change state as request 
-   if(data->lockReq != lockState)
-       lockState = data->lockReq;
-   if(data->lightReq != lightState)
-       lightState = data->lightReq;
-   
-   return RES_OK;
+   if((error = doAction(data)) != NO_ERR)
+       return error;
+
+   return NO_ERR;
 }
 
 void loop()
