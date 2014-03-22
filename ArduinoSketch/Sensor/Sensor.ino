@@ -1,3 +1,5 @@
+
+
 /** 
  * Sensor sketch  
  *
@@ -5,31 +7,26 @@
 
 //ACElib ref:https://github.com/DavyLandman/AESLib
 #include <AESLib.h>
-
-#define SIG_NULL     0
-#define SIG_UNLOCK   1
-#define SIG_LOCK     2
-#define SIG_LIGHTON  4
-#define SIG_LIGHTOFF 8
-
-#define RES_OK       0
-#define RES_ERR      1
+#include <structs.h>
+#include <CRC16.h>
 
 #define NODE_ID   1234
+
 //key has to be 16 bytes
 //this key should be set up both shared with controller
 //in case of multiple sensors, controller may need to maintain
 //multiple keys that maps to right sensor
 const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}; 
 
-byte outgoing[17];
-byte incoming[17];
+byte outgoing[16];
+byte incoming[16];
 
 //input pins 
 const int motionOutput = 13;
 const int motionInput = 4; 
 const int lightInput = A5;
 
+long seq = 0;
 int isMotion, brightness;
 int lockState = 0, lightState = 0;
 
@@ -50,14 +47,15 @@ void motionHasDetected()
 
 void sendData(int lock, int light)
 {
-    memset(outgoing,0x0,16);
-    //header
-    outgoing[0] = NODE_ID; 
-    outgoing[1] = 0; //reserve
-    outgoing[2] = lock;
-    outgoing[3] = light;
-    outgoing[4] = 0; //checksum
-    
+    data_msg data;
+    memset(&data,0x0,16);
+    data.id = NODE_ID;
+    data.sequence = seq++;
+    data.reserve = 0xFF;
+    data.lockReq = lock;
+    data.lightReq = light;
+    data.checksum = 0xFF;
+    memset(data.padding, 0x20, 6);
     //encrypt
     aes128_enc_single(key, outgoing);
     //send
