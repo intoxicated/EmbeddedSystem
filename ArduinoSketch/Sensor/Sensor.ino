@@ -28,7 +28,7 @@
 const int motionOutput = 13;
 const int motionInput = 4; 
 const int lightInput = A5;
-
+const int lightTriggerPoint = 350;
 //key has to be 16 bytes
 //this key should be set up both shared with controller
 //in case of multiple sensors, controller may need to maintain
@@ -172,7 +172,97 @@ void executeTests()
   
   delay(5000);
   
-  // Test 3: Etc.
+  // Test 3: Send a unlock on message
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_UNLOCK;
+  test.lightReq = SIG_NULL;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  aes128_enc_single(key, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);  
+  
+  // Test 4: Send a lock message
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_LOCK;
+  test.lightReq = SIG_NULL;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  aes128_enc_single(key, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);  
+  
+  // Test 5: Send a valid message encrypted with invalid key
+  // Controller shouldn't do anything since decrypted value 
+  // is garbage
+  byte fakekey [] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_UNLOCK;
+  test.lightReq = SIG_LIGHTON;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  aes128_enc_single(fakekey, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);
+  
+  // Test 6: Send invalid value of light/lock 
+  // Controller shouldn't do anything
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = 15;
+  test.lightReq = 84;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  aes128_enc_single(key, &test);
+  Serial.write((byte *)&test, 16);
+    
+  delay(5000);
+  
+  // Test 7: Demostrating bit flip or bit loss 
+  // Controller shouldn't do anything since checksum is not match
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_UNLOCK;
+  test.lightReq = SIG_LIGHTON;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  
+  test.sequence = seq++; 
+  
+  aes128_enc_single(fakekey, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);
+  // Test 8: Testing replay, Controller should ignore it since
+  //         sequence number is equal or less to previous one
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_UNLOCK;
+  test.lightReq = SIG_LIGHTON;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  aes128_enc_single(fakekey, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);
 }
 
 
@@ -181,7 +271,7 @@ void executeTests()
 */
 void productionCodeSample()
 {
-      //data has been sent but did not receive ack yet
+    //data has been sent but did not receive ack yet
     //go back to sendMessage and send it again
     if(sentMsg && !receivedAck)
        goto sendMessage;
@@ -199,16 +289,20 @@ sendMessage:
     if(isMotion){
        motionDetected();
        if(lockState == SIG_LOCK || lightState == SIG_LIGHTOFF) {
-         //check brightness here
-           sendData(SIG_UNLOCK, SIG_LIGHTON);
+           if(brightness <= lightTriggerPoint)
+               sendData(SIG_UNLOCK, SIG_LIGHTON);
+           else
+               sendData(SIG_UNLOCK, SIG_NULL);
            sentMsg = true;
        }
     } 
     else 
     {
        if(lockState == SIG_UNLOCK || lightState == SIG_LIGHTON) {
-         //check brightness here
-           sendData(SIG_LOCK, SIG_LIGHTOFF);
+           if(brightness > lightTriggerPoint)
+               sendData(SIG_LOCK, SIG_LIGHTOFF);
+           else
+               sendData(SIG_LOCK, SIG_NULL);
            sentMsg = true; 
        }
     }
