@@ -2,7 +2,7 @@
 #include <CRC16.h>
 #include "structs.h"
 
-#define NODE_ID   1234
+#define NODE_ID   12
 
 /** 
  * Sensor
@@ -37,7 +37,7 @@ const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 
 byte incoming[16];
 
-long seq = 0;
+long seq = 1;
 int isMotion, brightness;
 int lockState = 0, lightState = 0;
 boolean receivedAck = false;
@@ -51,6 +51,7 @@ void setup()
     Serial.begin(9600);
     pinMode(motionInput, INPUT);
     pinMode(lightInput, INPUT); 
+    pinMode(8, OUTPUT);
 }
 
 
@@ -135,6 +136,56 @@ void serialEvent()
 */
 void loop()
 {
+  executeTests();
+}
+
+
+void executeTests()
+{
+  data_msg test;
+
+  // Test 1: Send a lights on message.
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_NULL;
+  test.lightReq = SIG_LIGHTON;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 6); 
+  aes128_enc_single(key, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);
+  
+  // Test 2: Send a lights off message.
+  memset(&test, 0x00, 16);
+  test.id = NODE_ID;
+  test.sequence = seq++;
+  test.reserve = 0xFF;
+  test.lockReq = SIG_NULL;
+  test.lightReq = SIG_LIGHTOFF;
+  test.checksum = CRC::CRC16((uint8_t *)&test, 8);
+  memset(test.padding, 0x20, 5);
+  aes128_enc_single(key, &test);
+  Serial.write((byte *)&test, 16);
+  
+  delay(5000);
+  
+  // Test 3: Etc.
+}
+
+
+/**
+* Code that indicates what a production environment would look like.
+*/
+void productionCodeSample()
+{
+      //data has been sent but did not receive ack yet
+    //go back to sendMessage and send it again
+    if(sentMsg && !receivedAck)
+       goto sendMessage;
+       
     // Gather the environment data for this run of the loop
     isMotion = digitalRead(motionInput);
     brightness = analogRead(lightInput);
@@ -165,9 +216,4 @@ sendMessage:
     //wait 3seconds for ack
     if(sentMsg)
         delay(3000);
-    
-    //data has been sent but did not receive ack yet
-    //go back to sendMessage and send it again
-    if(sentMsg && !receivedAck)
-       goto sendMessage;
 }
