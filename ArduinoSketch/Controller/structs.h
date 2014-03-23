@@ -20,6 +20,8 @@
 #define CHKSUM_ERR   -6
 #define EXCEED_ERR   -7
 #define DUP_ERR      -8
+#define SAME_STATE   -9
+
 /* message struct that will be used 
  * when sensor sends data to the controller
  */
