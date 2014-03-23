@@ -117,19 +117,18 @@ void loop()
 sendMessage:  
     if(isMotion){
        motionHasDetected();
-       if(lockState != SIG_LOCK || lightState != SIG_LIGHTOFF){
+       if(lockState == SIG_LOCK || lightState == SIG_LIGHTOFF){
+         //check brightness here
            sendData(SIG_UNLOCK, SIG_LIGHTON);
            sentMsg = true;
        }
     } 
-
-    //some constant to determine light is on
     else 
     {
-       //turn off the light and lock
-       if(lockState != SIG_UNLOCK || lightState != SIG_LIGHTON){
-          sendData(SIG_LOCK, SIG_LIGHTOFF);
-          sentMsg = true; 
+       if(lockState == SIG_UNLOCK || lightState == SIG_LIGHTON){
+         //check brightness here
+           sendData(SIG_LOCK, SIG_LIGHTOFF);
+           sentMsg = true; 
        }
     }
     
