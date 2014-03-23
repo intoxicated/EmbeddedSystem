@@ -34,7 +34,7 @@ typedef struct data_msg {
   uint8_t lightReq;
   unsigned short checksum;
 
-  uint8_t padding[7];
+  uint8_t padding[6];
 };
 
 /* message struct that will be used
@@ -49,7 +49,7 @@ typedef struct res_msg {
   uint8_t lightState;
   unsigned short checksum;
 
-  uint8_t padding[6];
+  uint8_t padding[5];
 };
 
 #endif
