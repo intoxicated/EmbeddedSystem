@@ -1,5 +1,4 @@
 
-
 /** 
  * Sensor sketch  
  *
@@ -18,7 +17,6 @@
 //multiple keys that maps to right sensor
 const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}; 
 
-byte outgoing[16];
 byte incoming[16];
 
 //input pins 
@@ -29,6 +27,8 @@ const int lightInput = A5;
 long seq = 0;
 int isMotion, brightness;
 int lockState = 0, lightState = 0;
+boolean receivedAck = false;
+boolean sentMsg = false;
 
 void setup()
 {
@@ -57,9 +57,9 @@ void sendData(int lock, int light)
     data.checksum = CRC::CRC16((uint8_t *)&data, 8);
     memset(data.padding, 0x20, 6);
     //encrypt
-    aes128_enc_single(key, outgoing);
+    aes128_enc_single(key, &data);
     //send
-    Serial.write(outgoing, 16);
+    Serial.write((byte *)&data, 16);
 }
 
 /**
@@ -89,12 +89,11 @@ void serialEvent()
          lockState = data->lockState;
          lightState = data->lightState;
       }
-      else if(incoming[0] == 1) //error ??
+      else if(data->response != RES_OK) 
       {
-         //???
+         //errors
       }
-      else //ignore all others
-        ;
+      receivedAck = true;
    }
    else //if not 16 bytes, ignore
      ;
@@ -110,21 +109,36 @@ void loop()
     
     //brightness = constrain(brightness, 970, 1023);
     brightness = map(brightness, 0, 1023, 0, 255);
-  
+
+    //reset send/ack flag
+    receivedAck = false;
+    sentMsg = false;
+    
+sendMessage:  
     if(isMotion){
-       //turn on the light and unlock
-       //clear out
-       if(lockState != 1 || lightState != 1)
+       motionHasDetected();
+       if(lockState != SIG_LOCK || lightState != SIG_LIGHTOFF){
            sendData(SIG_UNLOCK, SIG_LIGHTON);
+           sentMsg = true;
+       }
     } 
 
     //some constant to determine light is on
     else 
     {
        //turn off the light and lock
-       if(lockState != 0 || lightState != 0)
+       if(lockState != SIG_UNLOCK || lightState != SIG_LIGHTON){
           sendData(SIG_LOCK, SIG_LIGHTOFF);
+          sentMsg = true; 
+       }
     }
-
-    //wait for 5sec?
+    
+    //wait 3seconds for ack
+    if(sentMsg)
+        delay(3000);
+    
+    //data has been sent but did not receive ack yet
+    //go back to sendMessage and send it again
+    if(sentMsg && !receivedAck)
+       goto sendMessage;
 }
