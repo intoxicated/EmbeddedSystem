@@ -3,7 +3,7 @@
 #include <CRC16.h>
 #include "structs.h"
 
-#define CTRL_ID   4321
+#define CTRL_ID   1
 #define MAX_NODES 10
 
 /**
