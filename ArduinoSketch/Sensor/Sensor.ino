@@ -135,6 +135,11 @@ void serialEvent()
 */
 void loop()
 {
+    //data has been sent but did not receive ack yet
+    //go back to sendMessage and send it again
+    if(sentMsg && !receivedAck)
+       goto sendMessage;
+       
     // Gather the environment data for this run of the loop
     isMotion = digitalRead(motionInput);
     brightness = analogRead(lightInput);
@@ -165,9 +170,5 @@ sendMessage:
     //wait 3seconds for ack
     if(sentMsg)
         delay(3000);
-    
-    //data has been sent but did not receive ack yet
-    //go back to sendMessage and send it again
-    if(sentMsg && !receivedAck)
-       goto sendMessage;
+
 }

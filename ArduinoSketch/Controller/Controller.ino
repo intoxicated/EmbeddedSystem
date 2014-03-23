@@ -23,9 +23,8 @@
 // Input pins
 const int doorLockLED = 12;
 const int doorUnlockLED = 11;
-const int lightRedLED = 10;
-const int lightGreenLED = 9;
-const int lightBlueLED = 8;
+const int lightOffLED = 9;
+const int lightOnLED = 8;
 
 //key has to be 16 bytes
 //this key should be set up both shared with controller
@@ -56,10 +55,15 @@ void setup()
    
    pinMode(doorLockLED, OUTPUT);
    pinMode(doorUnlockLED, OUTPUT);
-   pinMode(lightRedLED, OUTPUT);
-   pinMode(lightGreenLED, OUTPUT);
-   pinMode(lightBlueLED, OUTPUT);  
+   pinMode(lightOffLED, OUTPUT);
+   pinMode(lightOnLED, OUTPUT);
    
+   //initial state for lock and light
+   digitalWrite(doorLockLED, HIGH);
+   delay(500);
+   
+   digitalWrite(lightOffLED, HIGH);
+   delay(500);
 }
 
 /**
@@ -96,7 +100,7 @@ int checkErrors(data_msg * data)
    if(nodeCount >= MAX_NODES)
        return -1;       
        
-   // A node is new but is trying to claim that it isn't
+   //A node is new but is trying to claim that it isn't
    if(nodeMap.getIndexOf(data->id) == -1 && data->sequence != 1)
        return UNODE_ERR;
    
@@ -107,15 +111,17 @@ int checkErrors(data_msg * data)
        return DUP_ERR;
        
    // A bogus value is in the lock or light request field    
-   if(data->lockReq != SIG_LOCK && data->lockReq != SIG_UNLOCK)
+   if(data->lockReq != SIG_LOCK && data->lockReq != SIG_UNLOCK &&
+       data->lockReq != SIG_NULL)
        return LOCK_ERR;
-   if(data->lightReq != SIG_LIGHTON && data->lightReq != SIG_LIGHTOFF)
+   if(data->lightReq != SIG_LIGHTON && data->lightReq != SIG_LIGHTOFF &&
+       data->lightReq != SIG_NULL)
        return LIGHT_ERR;
-       
+   
    // The checksum of the message is not valid.
    if(CRC::CRC16((uint8_t*)data, 8) != data->checksum)
        return CHKSUM_ERR;
-   
+
    return 0;
 }
 
@@ -148,17 +154,17 @@ int doAction(data_msg * data)
 
    if(data->lightReq == SIG_LIGHTOFF &&
        data->lightReq != lightState) {
-       analogWrite(lightRedLED, 0);
-       analogWrite(lightGreenLED, 0);
-       analogWrite(lightBlueLED, 0);
-       delay(250);     
+       digitalWrite(lightOnLED, LOW);
+       delay(1000);
+       digitalWrite(lightOffLED, HIGH);
+       delay(1000);
    }
    else if(data->lightReq == SIG_LIGHTON &&
        data->lightReq != lightState){
-       analogWrite(lightRedLED, 0);
-       analogWrite(lightGreenLED, 0);
-       analogWrite(lightBlueLED, 0);
-       delay(250); 
+       digitalWrite(lightOffLED, LOW);
+       delay(1000);
+       digitalWrite(lightOnLED, HIGH);
+       delay(1000);
    }
    
    //change state of lock and light 
@@ -185,15 +191,15 @@ int readAndSet()
       incoming[count++] = Serial.read();
       delay(10);
    }
-   
+
    // It is an error if collected data is shorter than 16 bytes
    if(count != 16)
        return LEN_ERR;
-       
    // Decrypt the message
    aes128_dec_single(key,incoming); 
    data_msg * data = (data_msg *)incoming;
-   
+   char buffer[128];
+ 
    // Check that the sequence number is ok.
    currentSeq = data->sequence;
    
@@ -213,7 +219,7 @@ int readAndSet()
    // Change the state as requested
    if((error = doAction(data)) != NO_ERR)
        return error;
-
+   
    return NO_ERR;
 }
 
