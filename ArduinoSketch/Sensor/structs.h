@@ -1,16 +1,25 @@
 #ifndef __STRUCT_H__
 #define __STRUCT_H__
 
+/**
+* A set of constants and structures that will be used in our prototype
+* system.
+*
+* Last Modified: March 23, 2014
+*/
 
+// Light and lock state constants
 #define SIG_NULL     0
 #define SIG_UNLOCK   1
 #define SIG_LOCK     2
 #define SIG_LIGHTON  4
 #define SIG_LIGHTOFF 8
 
+// Response constants
 #define RES_OK       0
 #define RES_ERR      1
 
+// Error codes
 #define NO_ERR        0
 #define LOCK_ERR     -1
 #define LIGHT_ERR    -2
@@ -22,8 +31,10 @@
 #define DUP_ERR      -8
 #define SAME_STATE   -9
 
-/* message struct that will be used 
- * when sensor sends data to the controller
+
+/*
+ * The message struct that will be used 
+ * when the sensor sends data to the controller
  */
 typedef struct data_msg {
 
@@ -37,8 +48,9 @@ typedef struct data_msg {
   uint8_t padding[6];
 };
 
-/* message struct that will be used
- * when controller sends ack message to sensor
+/*
+ * The message struct that will be used
+ * when the controller sends an ack message to the sensor
  */
 typedef struct res_msg {
   uint8_t id;

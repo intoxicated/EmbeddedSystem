@@ -58,7 +58,6 @@ void setup()
    pinMode(lightOffLED, OUTPUT);
    pinMode(lightOnLED, OUTPUT);
    
-   //initial state for lock and light
    digitalWrite(doorLockLED, HIGH);
    delay(500);
    
@@ -195,12 +194,12 @@ int readAndSet()
    // It is an error if collected data is shorter than 16 bytes
    if(count != 16)
        return LEN_ERR;
+   
    // Decrypt the message
    aes128_dec_single(key,incoming); 
    data_msg * data = (data_msg *)incoming;
-   char buffer[128];
  
-   // Check that the sequence number is ok.
+   // Set the current sequence number for use in forming the message.
    currentSeq = data->sequence;
    
    // Check that there aren't any errors in the message to the client
