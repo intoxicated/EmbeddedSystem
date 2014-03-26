@@ -1,8 +1,15 @@
+#include <Time.h>
+
 #include <AESLib.h>
 #include <CRC16.h>
+#include <Time.h>
+#include <time.h>
 #include "structs.h"
 
 #define NODE_ID   12
+#define BRIGHTNESS_THRESHOLD 150
+#define LOCK_TIME_THRESHOLD 15
+#define LIGHT_TIME_THRESHOLD 180
 
 /** 
  * Sensor
@@ -23,10 +30,15 @@
  */
 
 // Input pins 
-const int motionOutput = 13;
 const int motionInput = 4; 
 const int lightInput = A5;
-const int lightTriggerPoint = 350;
+
+// Debug pins
+const int sendingMessage = 8;
+const int resendingMessage = 9;
+const int ackReceived = 10;
+const int nackReceived = 11;
+const int nonEvent = 12;
 
 /*
 * A key has to be 16 bytes. This key needs to be identical to the
@@ -36,13 +48,34 @@ const int lightTriggerPoint = 350;
 */
 const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}; 
 
-byte incoming[16];
+/*
+* Each node throughout its lifetime keeps track of a sequence number for message
+* that it sends. This sequence number is used to prevent replay attacks, and confirm
+* that the controller received and performed the actions requested.
+*/
+int seqNumber;
+boolean messageConfirmed;
+data_msg lastMessage;
 
-long seq = 1;
-int isMotion, brightness;
-int lockState = 0, lightState = 0;
-boolean receivedAck = false;
-boolean sentMsg = false;
+/**
+* Whenever there is no movement detected, we need to check when the last piece of movement
+* happened. This determines whether or not we need to change the state of the room.
+*/
+time_t lastMovement;
+
+/**
+* We need to keep track of the current state of the room. There's no point in sending a message
+* to the controller if the state isn't going to change. We probably need to incorporate a
+* protocol to prevent this from getting out of sync.
+*/
+int lockState;
+int lightState;
+
+void sendData(int, int);
+void determineNonMotionEvent(int);
+void determineMotionEvent(int);
+void productionCode();
+void resendLastMessage();
 
 /**
 * Sets up the pin mode and the serial port
@@ -51,37 +84,28 @@ void setup()
 {
     Serial.begin(9600);
     pinMode(motionInput, INPUT);
-    pinMode(lightInput, INPUT); 
-}
-
-
-/**
-* sendData sets up the message from the sensor to the controller
-* by setting the request values, the sequence number, and encrypting
-* the message.
-* 
-* @param lock    Whether or not the door should be unlocked/locked.
-* @param light   Whether or not the lights should be turned on/off.
-*/
-void sendData(int lock, int light)
-{
-    data_msg data;
-    memset(&data,0x0,16);
+    pinMode(lightInput, INPUT);
     
-    // Setup the message struct
-    data.id = NODE_ID;
-    data.sequence = seq++;
-    data.reserve = 0xFF;
-    data.lockReq = lock;
-    data.lightReq = light;
-    data.checksum = CRC::CRC16((uint8_t *)&data, 8);
-    memset(data.padding, 0x20, 6);
+    /**** DEBUG *****/
+    pinMode(sendingMessage, OUTPUT);
+    pinMode(resendingMessage, OUTPUT);
+    pinMode(ackReceived, OUTPUT);
+    pinMode(nackReceived, OUTPUT);
+    pinMode(nonEvent, OUTPUT);
     
-    // Encrypt and Send
-    aes128_enc_single(key, &data);
-    Serial.write((byte *)&data, 16);
+    memset(&lastMessage, 0x00, sizeof(struct data_msg));
+    
+    // We should probably negotiate this for project 2.
+    // But for now, door is locked and lights are off at the start of our prototype demo
+    lightState = SIG_LIGHTOFF;
+    lockState = SIG_LOCK;
+    
+    // This is also less than ideal. B
+    lastMovement = now();
+    
+    // No message means it is vacuously confirmed
+    messageConfirmed = true;
 }
-
 
 /**
  * serialEvent is called when there is data available in the
@@ -92,6 +116,7 @@ void sendData(int lock, int light)
 void serialEvent()
 {
    int count = 0;
+   byte incoming[16];
    
    // Read in all the available bytes into a buffer
    while(Serial.available())
@@ -108,17 +133,27 @@ void serialEvent()
    {
       aes128_dec_single(key, incoming);
       res_msg * data = (res_msg *)incoming;
-      //response ok!
-      if(data->response == RES_OK)
+      
+      if(data->response == RES_OK && data->ack == (seqNumber - 1))
       {
          lockState = data->lockState;
          lightState = data->lightState;
+         digitalWrite(ackReceived, HIGH);
+         delay(500);
+         digitalWrite(ackReceived, LOW);
       }
       else if(data->response != RES_OK) 
       {
-         //errors
+         digitalWrite(nackReceived, HIGH);
+         delay(500);
+         digitalWrite(nackReceived, LOW); 
       }
-      receivedAck = true;
+      else if(data->ack != seqNumber -1)
+      {
+         digitalWrite(nackReceived, HIGH);
+         delay(500);
+         digitalWrite(nackReceived, LOW);  
+      }
    }
 }
 
@@ -128,9 +163,128 @@ void serialEvent()
 */
 void loop()
 {
-  executeTests();
+  productionCode();
 }
 
+
+/**
+* Pseudocode that indicates what a production environment would look like. This
+* is the base code that we will start with when we start working to add the
+* timing/interrupts to the code
+*
+* In this section, we assume that we are tracking timeSinceLastMovement.
+*/
+void productionCode()
+{
+    boolean motion, messageSent;
+    
+    if (!messageConfirmed)    
+    {
+       digitalWrite(resendingMessage, HIGH);
+       delay(500);
+       digitalWrite(resendingMessage, LOW);
+       
+       Serial.write((byte *)&lastMessage, 16);
+       
+       delay(2000);
+    }
+      
+    // Gather the environment data for this run of the loop
+    motion = digitalRead(motionInput);
+ 
+    messageSent = (!motion && determineNonMotionEvent()) || (determineMotionEvent());
+    
+    if (messageSent) messageConfirmed = false;
+}
+
+/**
+* Determines the proper message (if any) for the detection of motion by the
+* sensor.
+*
+* @return Whether or not a message was sent to the controller
+*/
+boolean determineMotionEvent()
+{
+  int brightness;
+  
+  lastMovement = now();
+  
+  int turnLightsOn = SIG_NULL;
+  int lockDoor = SIG_NULL;
+  
+  // Brightness = [0, 1023]
+  brightness = analogRead(lightInput);
+
+  
+  if (lightState == SIG_LIGHTOFF && brightness < BRIGHTNESS_THRESHOLD) turnLightsOn == SIG_LIGHTON;
+  if (lockState == SIG_LOCK) lockDoor = SIG_UNLOCK;
+
+  // This will evaluate to false if both are still SIG_NULL
+  if (turnLightsOn || lockDoor)
+  {
+    sendData(lightState, lockState);
+    return true;
+  }
+  
+  return false;
+    
+}
+
+/**
+* Determine if we need to send a message if no motion was detected
+* on a given environment data scan.
+*
+* @return  Whether or not we sent a message
+*/
+boolean determineNonMotionEvent()
+{
+  time_t current = now();
+  
+  if (current - lastMovement > LIGHT_TIME_THRESHOLD)
+  {
+    sendData(SIG_LOCK, SIG_LIGHTOFF);
+    return true;
+  }
+  else if (current - lastMovement > LOCK_TIME_THRESHOLD)
+  {
+    sendData(SIG_LOCK, SIG_NULL);
+    return true;
+  }
+  
+  return false;
+}
+
+
+
+/**
+* sendData sets up the message from the sensor to the controller
+* by setting the request values, the sequence number, and encrypting
+* the message.
+* 
+* @param lock    Whether or not the door should be unlocked/locked.
+* @param light   Whether or not the lights should be turned on/off.
+*/
+void sendData(int lock, int light)
+{
+    data_msg data;
+    memset(&data, 0x0, sizeof(struct data_msg));
+    
+    // Setup the message struct
+    data.id = NODE_ID;
+    data.sequence = seqNumber++;
+    data.reserve = 0xFF;
+    data.lockReq = lock;
+    data.lightReq = light;
+    data.checksum = CRC::CRC16((uint8_t *)&data, 8);
+    memset(data.padding, 0x20, 6);
+    
+    // Keep a copy of this in case we need to resend it
+    memcpy(&lastMessage, &data, sizeof(struct data_msg));
+    
+    // Encrypt and Send
+    aes128_enc_single(key, &data);
+    Serial.write((byte *)&data, 16);
+}
 
 /**
 * A set of "fabricated" changes to the environment that could occur in the wild
@@ -144,7 +298,7 @@ void executeTests()
   // Test 1: Send a lights on message.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = SIG_NULL;
   test.lightReq = SIG_LIGHTON;
@@ -158,7 +312,7 @@ void executeTests()
   // Test 2: Send a lights off message.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = SIG_NULL;
   test.lightReq = SIG_LIGHTOFF;
@@ -172,7 +326,7 @@ void executeTests()
   // Test 3: Send a unlock on message
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_NULL;
@@ -186,7 +340,7 @@ void executeTests()
   // Test 4: Send a lock message
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = SIG_LOCK;
   test.lightReq = SIG_NULL;
@@ -203,7 +357,7 @@ void executeTests()
   byte fakekey [] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
@@ -218,7 +372,7 @@ void executeTests()
   // Controller shouldn't do anything
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = 15;
   test.lightReq = 84;
@@ -233,7 +387,7 @@ void executeTests()
   // Controller shouldn't do anything since checksum is not match
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq++;
+  test.sequence = seqNumber++;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
@@ -250,7 +404,7 @@ void executeTests()
   //         sequence number is equal or less to previous one
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seq-1;
+  test.sequence = seqNumber-1;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
@@ -260,54 +414,4 @@ void executeTests()
   Serial.write((byte *)&test, 16);
   
   delay(5000);
-}
-
-
-/**
-* Pseudocode that indicates what a production environment would look like. This
-* is the base code that we will start with when we start working to add the
-* timing/interrupts to the code
-*
-* In this section, we assume that we are tracking timeSinceLastMovement.
-*/
-void productionCodeSample()
-{
-    // In this case, the sensor hasn't received an ack yet. Resend the message.
-    if(sentMsg && !receivedAck)
-       //Resend last message
-       
-    // Gather the environment data for this run of the loop
-    isMotion = digitalRead(motionInput);
-    brightness = analogRead(lightInput);
-    brightness = map(brightness, 0, 1023, 0, 255);
-
-    //reset send/ack flag
-    receivedAck = false;
-    sentMsg = false;
-    
-    // If there is motion, unlock the door and/or turn on the lights
-    if(isMotion){
-       if(lockState == SIG_LOCK || lightState == SIG_LIGHTOFF) {
-           if(brightness <= lightTriggerPoint)
-               sendData(SIG_UNLOCK, SIG_LIGHTON);
-           else
-               sendData(SIG_UNLOCK, SIG_NULL);
-           sentMsg = true;
-       }
-    }
-    else 
-    {
-       // Check if we have surpassed the timeSinceLastMovement lock threshold
-       // Check if we have surpassed the timeSinceLsatMovement light threshold
-       
-       // Send a message appropriately based on the above two conditions
-       // -OR-
-       // Update the variable keeping track of the timeSinceLastMovement
-    }
- 
-    
-    // Wait a few seconds to allow the controller to respond if we sent a message
-    // or to prevent the system from needlessly checking as fast as it can since
-    // life tends not to happen in milliseconds!
-    delay(3000);
 }

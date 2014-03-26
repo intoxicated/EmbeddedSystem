@@ -58,7 +58,6 @@ void setup()
    pinMode(lightOffLED, OUTPUT);
    pinMode(lightOnLED, OUTPUT);
    
-   //initial state for lock and light
    digitalWrite(doorLockLED, HIGH);
    delay(500);
    
