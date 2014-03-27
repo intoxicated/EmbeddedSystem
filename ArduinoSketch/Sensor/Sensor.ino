@@ -30,8 +30,9 @@
  */
 
 // Input pins 
-const int motionInput = 4; 
+const int motionInput = 2; 
 const int lightInput = A5;
+const int motionPower = 13;
 
 // Debug pins
 const int sendingMessage = 8;
@@ -42,9 +43,7 @@ const int nonEvent = 12;
 
 /*
 * A key has to be 16 bytes. This key needs to be identical to the
-* key coded into the controller. In the case of multiple sensors, it may
-* be advisable to have multiple keys and thus the controller will need
-* to maintain a mapping of sensors -> keys.
+* key coded into the controller.
 */
 const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}; 
 
@@ -85,6 +84,8 @@ void setup()
     Serial.begin(9600);
     pinMode(motionInput, INPUT);
     pinMode(lightInput, INPUT);
+    pinMode(motionPower, OUTPUT);
+    digitalWrite(motionPower, HIGH);
     
     /**** DEBUG *****/
     pinMode(sendingMessage, OUTPUT);
@@ -92,6 +93,22 @@ void setup()
     pinMode(ackReceived, OUTPUT);
     pinMode(nackReceived, OUTPUT);
     pinMode(nonEvent, OUTPUT);
+    digitalWrite(sendingMessage, HIGH);
+    delay(500);
+    digitalWrite(sendingMessage, LOW);
+    digitalWrite(resendingMessage, HIGH);
+    delay(500);
+    digitalWrite(resendingMessage, LOW);
+    digitalWrite(ackReceived, HIGH);
+    delay(500);
+    digitalWrite(ackReceived, LOW);
+    digitalWrite(nackReceived, HIGH);
+    delay(500);
+    digitalWrite(nackReceived, LOW);
+    digitalWrite(nonEvent, HIGH);
+    delay(500);
+    digitalWrite(nonEvent, LOW);
+    /**** DEBUG *****/
     
     memset(&lastMessage, 0x00, sizeof(struct data_msg));
     
@@ -139,19 +156,19 @@ void serialEvent()
          lockState = data->lockState;
          lightState = data->lightState;
          digitalWrite(ackReceived, HIGH);
-         delay(500);
+         delay(2000);
          digitalWrite(ackReceived, LOW);
       }
       else if(data->response != RES_OK) 
       {
          digitalWrite(nackReceived, HIGH);
-         delay(500);
+         delay(2000);
          digitalWrite(nackReceived, LOW); 
       }
       else if(data->ack != seqNumber -1)
       {
          digitalWrite(nackReceived, HIGH);
-         delay(500);
+         delay(2000);
          digitalWrite(nackReceived, LOW);  
       }
    }
@@ -163,7 +180,7 @@ void serialEvent()
 */
 void loop()
 {
-  productionCode();
+  executeTests();
 }
 
 
@@ -226,6 +243,10 @@ boolean determineMotionEvent()
     return true;
   }
   
+  digitalWrite(nonEvent, HIGH);
+  delay(2000);
+  digitalWrite(nonEvent, LOW);
+  
   return false;
     
 }
@@ -250,6 +271,10 @@ boolean determineNonMotionEvent()
     sendData(SIG_LOCK, SIG_NULL);
     return true;
   }
+  
+  digitalWrite(nonEvent, HIGH);
+  delay(2000);
+  digitalWrite(nonEvent, LOW);
   
   return false;
 }
@@ -295,6 +320,8 @@ void executeTests()
 {
   data_msg test;
 
+  delay(1000);
+
   // Test 1: Send a lights on message.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
@@ -306,7 +333,7 @@ void executeTests()
   memset(test.padding, 0x20, 6); 
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
-  
+
   delay(5000);
   
   // Test 2: Send a lights off message.
@@ -323,7 +350,7 @@ void executeTests()
   
   delay(5000);
  
-  // Test 3: Send a unlock on message
+  // Test 3: Send a unlock message
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
   test.sequence = seqNumber++;
@@ -351,6 +378,7 @@ void executeTests()
   
   delay(5000);  
   
+  /*
   // Test 5: Send a valid message encrypted with invalid key
   // Controller shouldn't do anything since decrypted value 
   // is garbage
@@ -414,4 +442,5 @@ void executeTests()
   Serial.write((byte *)&test, 16);
   
   delay(5000);
+  */
 }
