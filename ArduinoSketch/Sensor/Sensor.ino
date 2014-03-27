@@ -6,7 +6,7 @@
 #include <time.h>
 #include "structs.h"
 
-#define NODE_ID   12
+#define NODE_ID   0
 #define BRIGHTNESS_THRESHOLD 150
 #define LOCK_TIME_THRESHOLD 15
 #define LIGHT_TIME_THRESHOLD 180

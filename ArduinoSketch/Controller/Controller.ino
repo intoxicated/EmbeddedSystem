@@ -1,5 +1,4 @@
 #include <AESLib.h>
-#include <HashMap.h>
 #include <CRC16.h>
 #include "structs.h"
 
@@ -40,9 +39,7 @@ const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 * that it sends. This sequence number is used to prevent replay attacks, and confirm
 * that the controller received and performed the actions requested.
 */
-HashType<int, long> nodeArray[MAX_NODES];
-HashMap<int, long> nodeMap = HashMap<int, long>(nodeArray, MAX_NODES);
-int nodeCount;
+long nodeSeqNumbers[MAX_NODES];
 
 /*
 * We need to keep track of the current state of the room. We probably need to
@@ -65,11 +62,18 @@ void setup()
 {
    Serial.begin(9600);
    
+   // Setup the input pins
    pinMode(doorLockLED, OUTPUT);
    pinMode(doorUnlockLED, OUTPUT);
    pinMode(lightOffLED, OUTPUT);
    pinMode(lightOnLED, OUTPUT);
    pinMode(message, OUTPUT);
+   
+   // Setup the sequence number tracking
+   for (int i = 0; i < MAX_NODES; i++)
+   {
+     nodeSeqNumber[i] = 0;
+   }
    
    /*** DEBUG ***/
    digitalWrite(doorUnlockLED, HIGH);
@@ -87,6 +91,7 @@ void setup()
    digitalWrite(message, HIGH);
    delay(500);
    digitalWrite(message, LOW);
+   /*** DEBUG ***/
    
    // For our prototype the lock and lights start locked and off, respectively
    lockState = SIG_LOCK;
@@ -119,8 +124,6 @@ void processMessage()
    int count = 0;
    byte incoming[16];
    
-   memset(incoming, 0x00, 16);
-   
    // Read all available data
    while(Serial.available())
    {
@@ -144,15 +147,16 @@ void processMessage()
    // Decrypt and check the message for errors;
    aes128_dec_single(key,incoming); 
    data_msg * data = (data_msg *) incoming;
+   
    if((error = checkErrors(data)) != NO_ERR)
    {
        //sendError(error);
        return;
    }
    
+   nodeSeqNumber[data->id]++;
+   
    /*
-   // If this is a new node, add it to our list of known nodes. Otherwise
-   // update the sequence number for the given node.  
    if(data->sequence == 1 && nodeCount < 10) {
        nodeMap[nodeCount++](data->id, data->sequence);
    }
@@ -215,7 +219,7 @@ void performRequest(data_msg * data)
    {
      digitalWrite(lightOnLED, LOW);
      delay(500);
-     digitalWrite(lightOnLED, HIGH);
+     digitalWrite(lightOffLED, HIGH);
    }
    
    // Update the current global state of the lock and light
@@ -250,33 +254,24 @@ void sendResponse(int ack, int response, int lockState, int lightState)
 
 
 /**
-* Checks a message received from a sensor for errors.
+* Check and see if we have a properly formed, and legitimate request.
+*
+* A request is valid and legitimate if:
+*    1) The checksum is correct
+*    2) The light and/or lock request are both valid
+*    3) The sequence number matches the next expected sequence number for the requesting
+*          node.
 */
 int checkErrors(data_msg * data)
 {
-   // We somehow have more than the max number of allowed nodes
-   if(nodeCount >= MAX_NODES)
+   // Check that the checksum is correct
+   if(CRC::CRC16((uint8_t*)data, 8) != data->checksum)
    {
-     Serial.println("Too many nodes.");
-     return -1;
-   }     
-       
-   /*
-   //A node is new but is trying to claim that it isn't
-   if(nodeMap.getIndexOf(data->id) == -1 && data->sequence != 1)
-   {
-     Serial.println("Node is new but trying to claim it isn't);
-     return UNODE_ERR;
+     Serial.println("Checksum invalid");
+     return CHKSUM_ERR;
    }
    
-   // The sequence number is not correct for a given node
-   if(data->sequence < nodeMap.getValueOf(data->id))
-       return SEQ_ERR;
-   if(data->sequence == nodeMap.getValueOf(data->id))
-       return DUP_ERR;
-   */
-   
-   // A bogus value is in the lock or light request field    
+   // Check that the light/lock requests are valid
    if(data->lockReq != SIG_LOCK && data->lockReq != SIG_UNLOCK &&
        data->lockReq != SIG_NULL)
    { 
@@ -288,15 +283,15 @@ int checkErrors(data_msg * data)
    {
      Serial.println("Bogus light request.");  
      return LIGHT_ERR;
-   }
-   
-   // The checksum of the message is not valid.
-   if(CRC::CRC16((uint8_t*)data, 8) != data->checksum)
-   {
-     Serial.println("Checksum invalid");
-     return CHKSUM_ERR;
-   }
+   }    
 
-   return 0;
+  // Check that the sequence numbers are valid
+  if (data->seqNumber != (nodeSeqNumber[data->id] + 1))
+  {
+    Serial.println("Incorrect sequence number.");
+    return SEQ_ERROR;
+  }
+  
+  return 0;
 }
 
