@@ -38,9 +38,9 @@ const int nackReceived = 11;
 const int nonEvent = 12;
 
 // Thresholds
-const int BRIGHTNESS_THRESHOLD = 5000;
-const int LOCK_TIME_THRESHOLD = 12;
-const int LIGHT_TIME_THRESHOLD = 2;
+const int BRIGHTNESS_THRESHOLD = 100;
+const int LOCK_TIME_THRESHOLD = 2;
+const int LIGHT_TIME_THRESHOLD = 12;
 
 /*
 * A key has to be 16 bytes. This key needs to be identical to the
@@ -98,7 +98,7 @@ void setup()
     lightState = SIG_LIGHTOFF;
     lockState = SIG_LOCK;
     
-    // This is also less than ideal. B
+    // This is also less than ideal.
     lastMovement = now();
     
     // No message means it is vacuously confirmed
@@ -201,9 +201,10 @@ void productionCode()
     // Gather the environment data for this run of the loop
     motion = digitalRead(motionInput);
  
-    messageSent = (!motion && determineNonMotionEvent()) || (determineMotionEvent());
-    
-    //if (messageSent) messageConfirmed = false;
+    if (motion) determineMotionEvent();
+    else        determineNonMotionEvent();
+        
+    messageSent = motion ? determineMotionEvent() : determineNonMotionEvent();
     
     delay(500);
 }
@@ -216,35 +217,35 @@ void productionCode()
 */
 boolean determineMotionEvent()
 {
-  int brightness;
-  
-  lastMovement = now();
-  
+  boolean messageSent = false;
   boolean turnLightsOn = false;
   boolean unlockDoor = false;
+  int brightness;
   
-  // Brightness = [0, 1023]
+  // Set the last recorded motion to be now.
+  lastMovement = now();
+  
+  //Serial.println("Motion!");
+  
   brightness = analogRead(lightInput);
-  Serial.print("Brightness: ");
-  Serial.print(brightness);
-  Serial.print("\tLight State: ");
-  Serial.println(lightState);
   
-  if (lightState == SIG_LIGHTOFF && brightness < BRIGHTNESS_THRESHOLD) turnLightsOn = true;
+  // Determine what modifications we should make
+  if (lightState == SIG_LIGHTOFF && brightness > BRIGHTNESS_THRESHOLD) turnLightsOn = true;
   if (lockState == SIG_LOCK)                                           unlockDoor = true;
 
-  // This will evaluate to false if both are still SIG_NULL
+  
+  // Send the appropriate message if any modifications should be made
   if (turnLightsOn || unlockDoor)
   {
     /**** DEBUG ****/
     if (unlockDoor)    lockState = SIG_UNLOCK;    
     {
-      Serial.println("Unlocking door.");
+     // Serial.println("Unlocking door.");
       lockState = SIG_UNLOCK;
     }
     if (turnLightsOn)
     {
-      Serial.println("Turning lights on.");
+      // Serial.println("Turning lights on.");
       lightState = SIG_LIGHTON;
     }
     /**** DEBUG ****/
@@ -252,10 +253,10 @@ boolean determineMotionEvent()
     sendData(unlockDoor ? SIG_UNLOCK : SIG_NULL,
              turnLightsOn ? SIG_LIGHTON : SIG_NULL);
 
-    return true;
+    messageSent = true;
   }
     
-  return false;  
+  return messageSent; 
 }
 
 
@@ -267,34 +268,32 @@ boolean determineMotionEvent()
 */
 boolean determineNonMotionEvent()
 {
-  time_t current = now();
-  
-  Serial.print("Current: ");
-  Serial.print(current);
-  Serial.print("\n Last Movement: ");
-  Serial.println(lastMovement);
-  
+  time_t current;
+  //Serial.println("No motion");
   // If the door is lock and the lights are off and we detect no movement we
   // have nothing to do.
   if (lockState == SIG_LOCK && lightState == SIG_LIGHTOFF)
   {
+    //Serial.println("I have nothing to do.");
     return false;
   }
+  
+  current = now();
   
   if (current - lastMovement > LIGHT_TIME_THRESHOLD)
   {
     /*** DEBUG ***/
-    Serial.println("Locking door and turning off light.");
+    //Serial.println("Locking door and turning off light.");
     /*** DEBUG ***/
     sendData(SIG_LOCK, SIG_LIGHTOFF);
     lockState = SIG_LOCK;
     lightState = SIG_LIGHTOFF;
     return true;
   }
-  else if (current - lastMovement > LOCK_TIME_THRESHOLD)
+  else if ((current - lastMovement > LOCK_TIME_THRESHOLD) && lockState == SIG_UNLOCK)
   {
     /*** DEBUG ***/
-    Serial.println("Locking door.");
+    //Serial.println("Locking door.");
     /*** DEBUG ***/
     sendData(SIG_LOCK, SIG_NULL);
     lockState = SIG_LOCK;
