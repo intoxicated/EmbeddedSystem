@@ -325,9 +325,12 @@ void sendData(int lock, int light)
 void executeTests()
 {
   data_msg test;
+  seqNumber = 0;
 
-  delay(1000);
-
+  delay(5000);
+  
+  Serial.write(255);
+  
   // Test 1: Send a lights on message.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
@@ -339,8 +342,8 @@ void executeTests()
   memset(test.padding, 0x20, 6); 
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
-
-  delay(5000);
+  
+  delay(6000);
   
   // Test 2: Send a lights off message.
   memset(&test, 0x00, 16);
@@ -354,7 +357,7 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
  
   // Test 3: Send a unlock message
   memset(&test, 0x00, 16);
@@ -382,16 +385,16 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);  
+  delay(6000);  
   
-  /*
+  
   // Test 5: Send a valid message encrypted with invalid key
   // Controller shouldn't do anything since decrypted value 
   // is garbage
   byte fakekey [] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber++;
+  test.sequence = seqNumber;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
@@ -400,13 +403,12 @@ void executeTests()
   aes128_enc_single(fakekey, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
   
-  // Test 6: Send invalid value of light/lock 
-  // Controller shouldn't do anything
+  // Test 6: Send a bogus request.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber++;
+  test.sequence = seqNumber;
   test.reserve = 0xFF;
   test.lockReq = 15;
   test.lightReq = 84;
@@ -415,38 +417,34 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
     
-  delay(5000);
+  delay(6000);
   
-  // Test 7: Demostrating bit flip or bit loss 
-  // Controller shouldn't do anything since checksum is not match
+  // Test 7: Demostrating bit flip or bit loss.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber++;
+  test.sequence = seqNumber;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
   test.checksum = CRC::CRC16((uint8_t *)&test, 8);
   memset(test.padding, 0x20, 6);
-  test.lightReq = SIG_LIGHTOFF;
-  
+  test.lightReq = SIG_LIGHTOFF;      // "Bit flip/loss"
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
   
-  // Test 8: Testing replay, Controller should ignore it since
-  //         sequence number is equal or less to previous one
+  // Test 8: Testing a replay attack.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber-1;
+  test.sequence = 2;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
-  test.lightReq = SIG_LIGHTON;
+  test.lightReq = SIG_NULL;
   test.checksum = CRC::CRC16((uint8_t *)&test, 8);
   memset(test.padding, 0x20, 6);
-  aes128_enc_single(fakekey, &test);
+  aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
-  */
+  delay(6000);
 }

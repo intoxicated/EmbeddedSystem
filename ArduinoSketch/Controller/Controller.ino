@@ -25,6 +25,7 @@ const int lightOffLED = 9;
 const int doorUnlockLED = 10;
 const int doorLockLED = 11;
 const int message = 12;
+const int droppingMessage = 13;
 
 /*
 * A key has to be 16 bytes. This key needs to be identical to the
@@ -39,7 +40,7 @@ const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
 * that it sends. This sequence number is used to prevent replay attacks, and confirm
 * that the controller received and performed the actions requested.
 */
-long nodeSeqNumbers[MAX_NODES];
+long nodeSeqNumber[MAX_NODES];
 
 /*
 * We need to keep track of the current state of the room. We probably need to
@@ -68,6 +69,7 @@ void setup()
    pinMode(lightOffLED, OUTPUT);
    pinMode(lightOnLED, OUTPUT);
    pinMode(message, OUTPUT);
+   pinMode(droppingMessage, OUTPUT);
    
    // Setup the sequence number tracking
    for (int i = 0; i < MAX_NODES; i++)
@@ -91,6 +93,10 @@ void setup()
    digitalWrite(message, HIGH);
    delay(500);
    digitalWrite(message, LOW);
+   digitalWrite(droppingMessage, HIGH);
+   delay(500);
+   digitalWrite(droppingMessage, LOW);
+   
    /*** DEBUG ***/
    
    // For our prototype the lock and lights start locked and off, respectively
@@ -109,7 +115,6 @@ void loop()
 {
    if(Serial.available())
    {
-      Serial.println("Message for us!");
       processMessage();
    }
 }
@@ -155,6 +160,9 @@ void processMessage()
    data_msg * data = (data_msg *) incoming;
    if((error = checkErrors(data)) != NO_ERR)
    {
+       digitalWrite(droppingMessage, HIGH);
+       delay(500);
+       digitalWrite(droppingMessage, LOW);
        //TODO: sendError(error);
        return;
    }
@@ -193,12 +201,14 @@ void performRequest(data_msg * data)
      digitalWrite(doorLockLED, LOW);
      delay(500);
      digitalWrite(doorUnlockLED, HIGH);
+     lockState = SIG_UNLOCK;
    }
    else if (lockState == SIG_UNLOCK && data->lockReq == SIG_LOCK)
    {
      digitalWrite(doorUnlockLED, LOW);
      delay(500);
      digitalWrite(doorLockLED, HIGH);
+     lockState = SIG_LOCK;
    }
    
    // Handle a request to change the state of the lights
@@ -207,17 +217,16 @@ void performRequest(data_msg * data)
      digitalWrite(lightOffLED, LOW);
      delay(500);
      digitalWrite(lightOnLED, HIGH);
+     lightState = SIG_LIGHTON;
    }
    else if (lightState == SIG_LIGHTON && data->lightReq == SIG_LIGHTOFF)
    {
      digitalWrite(lightOnLED, LOW);
      delay(500);
      digitalWrite(lightOffLED, HIGH);
+     lightState = SIG_LIGHTOFF;
    }
    
-   // Update the current global state of the lock and light
-   lockState = data->lockReq;
-   lightState = data->lightReq;
 }
 
 
@@ -234,7 +243,7 @@ void sendResponse(int sensorID, int response, int lockState, int lightState)
     res_msg msg;
     memset(&msg, 0x0, 16);
     msg.id = sensorID;
-    msg.ack = nodeSeqNumbers[sensorID];
+    msg.ack = nodeSeqNumber[sensorID];
     msg.reserve = 0xFF;
     msg.response = response;
     msg.lockState = lockState;
@@ -280,12 +289,17 @@ int checkErrors(data_msg * data)
    }    
 
   // Check that the sequence numbers are valid
-  if (data->seqNumber != nodeSeqNumber[data->id])
+  if (data->sequence != nodeSeqNumber[data->id])
   {
     Serial.println("Incorrect sequence number.");
-    return SEQ_ERROR;
+    Serial.print("Expected: ");
+    Serial.println(nodeSeqNumber[data->id]);
+    Serial.print("Received: ");
+    Serial.println(data->sequence);
+    
+    return SEQ_ERR;
   }
   
-  return 0;
+  return NO_ERR;
 }
 
