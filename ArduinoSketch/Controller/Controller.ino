@@ -117,6 +117,12 @@ void loop()
 
 /**
 * Reads in and processes a message from the sensor node
+*
+* Steps:
+*   1) Read the data into the buffer to reconstruct the message
+*   2) Decrypt and Verify
+*   3) Perform the request
+*   4) Respond to the sensor.
 */
 void processMessage()
 {
@@ -147,23 +153,11 @@ void processMessage()
    // Decrypt and check the message for errors;
    aes128_dec_single(key,incoming); 
    data_msg * data = (data_msg *) incoming;
-   
    if((error = checkErrors(data)) != NO_ERR)
    {
-       //sendError(error);
+       //TODO: sendError(error);
        return;
    }
-   
-   nodeSeqNumber[data->id]++;
-   
-   /*
-   if(data->sequence == 1 && nodeCount < 10) {
-       nodeMap[nodeCount++](data->id, data->sequence);
-   }
-   else {
-     nodeMap.setValueOf(data->id, data->sequence);
-   }
-   */
    
    /*** DEBUG ****/
    digitalWrite(message, HIGH);
@@ -172,10 +166,9 @@ void processMessage()
    /**** DEBUG ****/
    
   performRequest(data);
-  //sendResponse(data->seqNumber, NO_ERR, lockState, lightState);
+  //sendResponse(data->id, NO_ERR, lockState, lightState);
+  nodeSeqNumber[data->id]++;
 }
-
-
 
 
 /**
@@ -227,6 +220,7 @@ void performRequest(data_msg * data)
    lightState = data->lightReq;
 }
 
+
 /**
 * Sends a response back to a sensor node based on the results of the
 * action requested.
@@ -235,12 +229,12 @@ void performRequest(data_msg * data)
 * @param lockState   The lock state after the requested action
 * @param lightState  The light state after the requested action
 */
-void sendResponse(int ack, int response, int lockState, int lightState)
+void sendResponse(int sensorID, int response, int lockState, int lightState)
 {
     res_msg msg;
     memset(&msg, 0x0, 16);
-    msg.id = CTRL_ID;
-    msg.ack = ack;
+    msg.id = sensorID;
+    msg.ack = nodeSeqNumbers[sensorID];
     msg.reserve = 0xFF;
     msg.response = response;
     msg.lockState = lockState;
@@ -286,7 +280,7 @@ int checkErrors(data_msg * data)
    }    
 
   // Check that the sequence numbers are valid
-  if (data->seqNumber != (nodeSeqNumber[data->id] + 1))
+  if (data->seqNumber != nodeSeqNumber[data->id])
   {
     Serial.println("Incorrect sequence number.");
     return SEQ_ERROR;

@@ -122,6 +122,8 @@ void setup()
     
     // No message means it is vacuously confirmed
     messageConfirmed = true;
+    
+    seqNumber = 0;
 }
 
 /**
@@ -151,6 +153,10 @@ void serialEvent()
       aes128_dec_single(key, incoming);
       res_msg * data = (res_msg *)incoming;
       
+      // Ignore this message if it isn't for us.
+      if (data->id != NODE_ID)    return;
+      
+      // Signal a success or a failure
       if(data->response == RES_OK && data->ack == (seqNumber - 1))
       {
          lockState = data->lockState;
