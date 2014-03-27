@@ -77,28 +77,6 @@ void setup()
      nodeSeqNumber[i] = 0;
    }
    
-   /*** DEBUG ***/
-   digitalWrite(doorUnlockLED, HIGH);
-   delay(500);
-   digitalWrite(doorUnlockLED, LOW);
-   digitalWrite(doorLockLED, HIGH);
-   delay(500);
-   digitalWrite(doorLockLED, LOW);
-   digitalWrite(lightOffLED, HIGH);
-   delay(500);
-   digitalWrite(lightOffLED, LOW);
-   digitalWrite(lightOnLED, HIGH);
-   delay(500);
-   digitalWrite(lightOnLED, LOW);
-   digitalWrite(message, HIGH);
-   delay(500);
-   digitalWrite(message, LOW);
-   digitalWrite(droppingMessage, HIGH);
-   delay(500);
-   digitalWrite(droppingMessage, LOW);
-   
-   /*** DEBUG ***/
-   
    // For our prototype the lock and lights start locked and off, respectively
    lockState = SIG_LOCK;
    digitalWrite(doorLockLED, HIGH);
@@ -288,17 +266,19 @@ int checkErrors(data_msg * data)
      return LIGHT_ERR;
    }    
 
+  /*
   // Check that the sequence numbers are valid
   if (data->sequence != nodeSeqNumber[data->id])
   {
-    Serial.println("Incorrect sequence number.");
+    Serial.print("Incorrect sequence number. ");
     Serial.print("Expected: ");
-    Serial.println(nodeSeqNumber[data->id]);
-    Serial.print("Received: ");
+    Serial.print(nodeSeqNumber[data->id]);
+    Serial.print("  Received: ");
     Serial.println(data->sequence);
     
     return SEQ_ERR;
   }
+  */
   
   return NO_ERR;
 }

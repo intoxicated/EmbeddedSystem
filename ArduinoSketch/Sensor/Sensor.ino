@@ -3,13 +3,9 @@
 #include <AESLib.h>
 #include <CRC16.h>
 #include <Time.h>
-#include <time.h>
 #include "structs.h"
 
 #define NODE_ID   0
-#define BRIGHTNESS_THRESHOLD 150
-#define LOCK_TIME_THRESHOLD 15
-#define LIGHT_TIME_THRESHOLD 180
 
 /** 
  * Sensor
@@ -40,6 +36,11 @@ const int resendingMessage = 9;
 const int ackReceived = 10;
 const int nackReceived = 11;
 const int nonEvent = 12;
+
+// Thresholds
+const int BRIGHTNESS_THRESHOLD = 5000;
+const int LOCK_TIME_THRESHOLD = 12;
+const int LIGHT_TIME_THRESHOLD = 2;
 
 /*
 * A key has to be 16 bytes. This key needs to be identical to the
@@ -87,28 +88,8 @@ void setup()
     pinMode(motionPower, OUTPUT);
     digitalWrite(motionPower, HIGH);
     
-    /**** DEBUG *****/
-    pinMode(sendingMessage, OUTPUT);
-    pinMode(resendingMessage, OUTPUT);
-    pinMode(ackReceived, OUTPUT);
-    pinMode(nackReceived, OUTPUT);
+    // Debug pins
     pinMode(nonEvent, OUTPUT);
-    digitalWrite(sendingMessage, HIGH);
-    delay(500);
-    digitalWrite(sendingMessage, LOW);
-    digitalWrite(resendingMessage, HIGH);
-    delay(500);
-    digitalWrite(resendingMessage, LOW);
-    digitalWrite(ackReceived, HIGH);
-    delay(500);
-    digitalWrite(ackReceived, LOW);
-    digitalWrite(nackReceived, HIGH);
-    delay(500);
-    digitalWrite(nackReceived, LOW);
-    digitalWrite(nonEvent, HIGH);
-    delay(500);
-    digitalWrite(nonEvent, LOW);
-    /**** DEBUG *****/
     
     memset(&lastMessage, 0x00, sizeof(struct data_msg));
     
@@ -162,19 +143,19 @@ void serialEvent()
          lockState = data->lockState;
          lightState = data->lightState;
          digitalWrite(ackReceived, HIGH);
-         delay(2000);
+         delay(500);
          digitalWrite(ackReceived, LOW);
       }
       else if(data->response != RES_OK) 
       {
          digitalWrite(nackReceived, HIGH);
-         delay(2000);
+         delay(500);
          digitalWrite(nackReceived, LOW); 
       }
       else if(data->ack != seqNumber -1)
       {
          digitalWrite(nackReceived, HIGH);
-         delay(2000);
+         delay(500);
          digitalWrite(nackReceived, LOW);  
       }
    }
@@ -186,7 +167,8 @@ void serialEvent()
 */
 void loop()
 {
-  executeTests();
+  //executeTests();
+  productionCode();
 }
 
 
@@ -201,6 +183,7 @@ void productionCode()
 {
     boolean motion, messageSent;
     
+    /*
     if (!messageConfirmed)    
     {
        digitalWrite(resendingMessage, HIGH);
@@ -209,15 +192,20 @@ void productionCode()
        
        Serial.write((byte *)&lastMessage, 16);
        
-       delay(2000);
+       delay(500);
+       
+       return;
     }
-      
+    */
+    
     // Gather the environment data for this run of the loop
     motion = digitalRead(motionInput);
  
     messageSent = (!motion && determineNonMotionEvent()) || (determineMotionEvent());
     
-    if (messageSent) messageConfirmed = false;
+    //if (messageSent) messageConfirmed = false;
+    
+    delay(500);
 }
 
 /**
@@ -232,30 +220,44 @@ boolean determineMotionEvent()
   
   lastMovement = now();
   
-  int turnLightsOn = SIG_NULL;
-  int lockDoor = SIG_NULL;
+  boolean turnLightsOn = false;
+  boolean unlockDoor = false;
   
   // Brightness = [0, 1023]
   brightness = analogRead(lightInput);
-
+  Serial.print("Brightness: ");
+  Serial.print(brightness);
+  Serial.print("\tLight State: ");
+  Serial.println(lightState);
   
-  if (lightState == SIG_LIGHTOFF && brightness < BRIGHTNESS_THRESHOLD) turnLightsOn == SIG_LIGHTON;
-  if (lockState == SIG_LOCK) lockDoor = SIG_UNLOCK;
+  if (lightState == SIG_LIGHTOFF && brightness < BRIGHTNESS_THRESHOLD) turnLightsOn = true;
+  if (lockState == SIG_LOCK)                                           unlockDoor = true;
 
   // This will evaluate to false if both are still SIG_NULL
-  if (turnLightsOn || lockDoor)
+  if (turnLightsOn || unlockDoor)
   {
-    sendData(lightState, lockState);
+    /**** DEBUG ****/
+    if (unlockDoor)    lockState = SIG_UNLOCK;    
+    {
+      Serial.println("Unlocking door.");
+      lockState = SIG_UNLOCK;
+    }
+    if (turnLightsOn)
+    {
+      Serial.println("Turning lights on.");
+      lightState = SIG_LIGHTON;
+    }
+    /**** DEBUG ****/
+    
+    sendData(unlockDoor ? SIG_UNLOCK : SIG_NULL,
+             turnLightsOn ? SIG_LIGHTON : SIG_NULL);
+
     return true;
   }
-  
-  digitalWrite(nonEvent, HIGH);
-  delay(2000);
-  digitalWrite(nonEvent, LOW);
-  
-  return false;
     
+  return false;  
 }
+
 
 /**
 * Determine if we need to send a message if no motion was detected
@@ -267,21 +269,38 @@ boolean determineNonMotionEvent()
 {
   time_t current = now();
   
+  Serial.print("Current: ");
+  Serial.print(current);
+  Serial.print("\n Last Movement: ");
+  Serial.println(lastMovement);
+  
+  // If the door is lock and the lights are off and we detect no movement we
+  // have nothing to do.
+  if (lockState == SIG_LOCK && lightState == SIG_LIGHTOFF)
+  {
+    return false;
+  }
+  
   if (current - lastMovement > LIGHT_TIME_THRESHOLD)
   {
+    /*** DEBUG ***/
+    Serial.println("Locking door and turning off light.");
+    /*** DEBUG ***/
     sendData(SIG_LOCK, SIG_LIGHTOFF);
+    lockState = SIG_LOCK;
+    lightState = SIG_LIGHTOFF;
     return true;
   }
   else if (current - lastMovement > LOCK_TIME_THRESHOLD)
   {
+    /*** DEBUG ***/
+    Serial.println("Locking door.");
+    /*** DEBUG ***/
     sendData(SIG_LOCK, SIG_NULL);
+    lockState = SIG_LOCK;
     return true;
   }
-  
-  digitalWrite(nonEvent, HIGH);
-  delay(2000);
-  digitalWrite(nonEvent, LOW);
-  
+
   return false;
 }
 
@@ -328,8 +347,6 @@ void executeTests()
   seqNumber = 0;
 
   delay(5000);
-  
-  Serial.write(255);
   
   // Test 1: Send a lights on message.
   memset(&test, 0x00, 16);
