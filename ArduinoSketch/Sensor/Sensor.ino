@@ -3,13 +3,9 @@
 #include <AESLib.h>
 #include <CRC16.h>
 #include <Time.h>
-#include <time.h>
 #include "structs.h"
 
-#define NODE_ID   12
-#define BRIGHTNESS_THRESHOLD 150
-#define LOCK_TIME_THRESHOLD 15
-#define LIGHT_TIME_THRESHOLD 180
+#define NODE_ID   0
 
 /** 
  * Sensor
@@ -30,8 +26,9 @@
  */
 
 // Input pins 
-const int motionInput = 4; 
+const int motionInput = 2; 
 const int lightInput = A5;
+const int motionPower = 13;
 
 // Debug pins
 const int sendingMessage = 8;
@@ -40,11 +37,14 @@ const int ackReceived = 10;
 const int nackReceived = 11;
 const int nonEvent = 12;
 
+// Thresholds
+const int BRIGHTNESS_THRESHOLD = 100;
+const int LOCK_TIME_THRESHOLD = 2;
+const int LIGHT_TIME_THRESHOLD = 12;
+
 /*
 * A key has to be 16 bytes. This key needs to be identical to the
-* key coded into the controller. In the case of multiple sensors, it may
-* be advisable to have multiple keys and thus the controller will need
-* to maintain a mapping of sensors -> keys.
+* key coded into the controller.
 */
 const byte key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15}; 
 
@@ -85,12 +85,10 @@ void setup()
     Serial.begin(9600);
     pinMode(motionInput, INPUT);
     pinMode(lightInput, INPUT);
+    pinMode(motionPower, OUTPUT);
+    digitalWrite(motionPower, HIGH);
     
-    /**** DEBUG *****/
-    pinMode(sendingMessage, OUTPUT);
-    pinMode(resendingMessage, OUTPUT);
-    pinMode(ackReceived, OUTPUT);
-    pinMode(nackReceived, OUTPUT);
+    // Debug pins
     pinMode(nonEvent, OUTPUT);
     
     memset(&lastMessage, 0x00, sizeof(struct data_msg));
@@ -100,11 +98,13 @@ void setup()
     lightState = SIG_LIGHTOFF;
     lockState = SIG_LOCK;
     
-    // This is also less than ideal. B
+    // This is also less than ideal.
     lastMovement = now();
     
     // No message means it is vacuously confirmed
     messageConfirmed = true;
+    
+    seqNumber = 0;
 }
 
 /**
@@ -134,6 +134,10 @@ void serialEvent()
       aes128_dec_single(key, incoming);
       res_msg * data = (res_msg *)incoming;
       
+      // Ignore this message if it isn't for us.
+      if (data->id != NODE_ID)    return;
+      
+      // Signal a success or a failure
       if(data->response == RES_OK && data->ack == (seqNumber - 1))
       {
          lockState = data->lockState;
@@ -163,6 +167,7 @@ void serialEvent()
 */
 void loop()
 {
+  //executeTests();
   productionCode();
 }
 
@@ -178,6 +183,7 @@ void productionCode()
 {
     boolean motion, messageSent;
     
+    /*
     if (!messageConfirmed)    
     {
        digitalWrite(resendingMessage, HIGH);
@@ -186,15 +192,21 @@ void productionCode()
        
        Serial.write((byte *)&lastMessage, 16);
        
-       delay(2000);
+       delay(500);
+       
+       return;
     }
-      
+    */
+    
     // Gather the environment data for this run of the loop
     motion = digitalRead(motionInput);
  
-    messageSent = (!motion && determineNonMotionEvent()) || (determineMotionEvent());
+    if (motion) determineMotionEvent();
+    else        determineNonMotionEvent();
+        
+    messageSent = motion ? determineMotionEvent() : determineNonMotionEvent();
     
-    if (messageSent) messageConfirmed = false;
+    delay(500);
 }
 
 /**
@@ -205,30 +217,48 @@ void productionCode()
 */
 boolean determineMotionEvent()
 {
+  boolean messageSent = false;
+  boolean turnLightsOn = false;
+  boolean unlockDoor = false;
   int brightness;
   
+  // Set the last recorded motion to be now.
   lastMovement = now();
   
-  int turnLightsOn = SIG_NULL;
-  int lockDoor = SIG_NULL;
+  //Serial.println("Motion!");
   
-  // Brightness = [0, 1023]
   brightness = analogRead(lightInput);
+  
+  // Determine what modifications we should make
+  if (lightState == SIG_LIGHTOFF && brightness > BRIGHTNESS_THRESHOLD) turnLightsOn = true;
+  if (lockState == SIG_LOCK)                                           unlockDoor = true;
 
   
-  if (lightState == SIG_LIGHTOFF && brightness < BRIGHTNESS_THRESHOLD) turnLightsOn == SIG_LIGHTON;
-  if (lockState == SIG_LOCK) lockDoor = SIG_UNLOCK;
-
-  // This will evaluate to false if both are still SIG_NULL
-  if (turnLightsOn || lockDoor)
+  // Send the appropriate message if any modifications should be made
+  if (turnLightsOn || unlockDoor)
   {
-    sendData(lightState, lockState);
-    return true;
-  }
-  
-  return false;
+    /**** DEBUG ****/
+    if (unlockDoor)    lockState = SIG_UNLOCK;    
+    {
+     // Serial.println("Unlocking door.");
+      lockState = SIG_UNLOCK;
+    }
+    if (turnLightsOn)
+    {
+      // Serial.println("Turning lights on.");
+      lightState = SIG_LIGHTON;
+    }
+    /**** DEBUG ****/
     
+    sendData(unlockDoor ? SIG_UNLOCK : SIG_NULL,
+             turnLightsOn ? SIG_LIGHTON : SIG_NULL);
+
+    messageSent = true;
+  }
+    
+  return messageSent; 
 }
+
 
 /**
 * Determine if we need to send a message if no motion was detected
@@ -238,19 +268,38 @@ boolean determineMotionEvent()
 */
 boolean determineNonMotionEvent()
 {
-  time_t current = now();
+  time_t current;
+  //Serial.println("No motion");
+  // If the door is lock and the lights are off and we detect no movement we
+  // have nothing to do.
+  if (lockState == SIG_LOCK && lightState == SIG_LIGHTOFF)
+  {
+    //Serial.println("I have nothing to do.");
+    return false;
+  }
+  
+  current = now();
   
   if (current - lastMovement > LIGHT_TIME_THRESHOLD)
   {
+    /*** DEBUG ***/
+    //Serial.println("Locking door and turning off light.");
+    /*** DEBUG ***/
     sendData(SIG_LOCK, SIG_LIGHTOFF);
+    lockState = SIG_LOCK;
+    lightState = SIG_LIGHTOFF;
     return true;
   }
-  else if (current - lastMovement > LOCK_TIME_THRESHOLD)
+  else if ((current - lastMovement > LOCK_TIME_THRESHOLD) && lockState == SIG_UNLOCK)
   {
+    /*** DEBUG ***/
+    //Serial.println("Locking door.");
+    /*** DEBUG ***/
     sendData(SIG_LOCK, SIG_NULL);
+    lockState = SIG_LOCK;
     return true;
   }
-  
+
   return false;
 }
 
@@ -294,7 +343,10 @@ void sendData(int lock, int light)
 void executeTests()
 {
   data_msg test;
+  seqNumber = 0;
 
+  delay(5000);
+  
   // Test 1: Send a lights on message.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
@@ -307,7 +359,7 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
   
   // Test 2: Send a lights off message.
   memset(&test, 0x00, 16);
@@ -321,9 +373,9 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
  
-  // Test 3: Send a unlock on message
+  // Test 3: Send a unlock message
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
   test.sequence = seqNumber++;
@@ -349,7 +401,8 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);  
+  delay(6000);  
+  
   
   // Test 5: Send a valid message encrypted with invalid key
   // Controller shouldn't do anything since decrypted value 
@@ -357,7 +410,7 @@ void executeTests()
   byte fakekey [] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16};
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber++;
+  test.sequence = seqNumber;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
@@ -366,13 +419,12 @@ void executeTests()
   aes128_enc_single(fakekey, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
   
-  // Test 6: Send invalid value of light/lock 
-  // Controller shouldn't do anything
+  // Test 6: Send a bogus request.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber++;
+  test.sequence = seqNumber;
   test.reserve = 0xFF;
   test.lockReq = 15;
   test.lightReq = 84;
@@ -381,37 +433,34 @@ void executeTests()
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
     
-  delay(5000);
+  delay(6000);
   
-  // Test 7: Demostrating bit flip or bit loss 
-  // Controller shouldn't do anything since checksum is not match
+  // Test 7: Demostrating bit flip or bit loss.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber++;
+  test.sequence = seqNumber;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
   test.lightReq = SIG_LIGHTON;
   test.checksum = CRC::CRC16((uint8_t *)&test, 8);
   memset(test.padding, 0x20, 6);
-  test.lightReq = SIG_LIGHTOFF;
-  
+  test.lightReq = SIG_LIGHTOFF;      // "Bit flip/loss"
   aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
   
-  // Test 8: Testing replay, Controller should ignore it since
-  //         sequence number is equal or less to previous one
+  // Test 8: Testing a replay attack.
   memset(&test, 0x00, 16);
   test.id = NODE_ID;
-  test.sequence = seqNumber-1;
+  test.sequence = 2;
   test.reserve = 0xFF;
   test.lockReq = SIG_UNLOCK;
-  test.lightReq = SIG_LIGHTON;
+  test.lightReq = SIG_NULL;
   test.checksum = CRC::CRC16((uint8_t *)&test, 8);
   memset(test.padding, 0x20, 6);
-  aes128_enc_single(fakekey, &test);
+  aes128_enc_single(key, &test);
   Serial.write((byte *)&test, 16);
   
-  delay(5000);
+  delay(6000);
 }
